@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>mcmc-forge · 马尔可夫链蒙特卡洛实验室</title>
+<style>
+  :root{
+    --bg:#f7f8fa; --card:#ffffff; --line:#e3e6ea; --ink:#1b1f24; --dim:#6b7280;
+    --accent:#2563eb; --ok:#0f8a4d; --bad:#c92a2a; --soft:#eef2f7;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;}
+  .wrap{max-width:1120px;margin:0 auto;padding:22px 18px 60px}
+  h1{font-size:21px;margin:0 0 2px;letter-spacing:.2px}
+  .sub{color:var(--dim);font-size:12.5px;margin:0 0 18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
+  .card h2{font-size:14.5px;margin:0 0 3px}
+  .card .note{color:var(--dim);font-size:12px;margin:0 0 12px}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:820px){.grid2{grid-template-columns:1fr}}
+  label{display:block;font-size:12px;color:var(--dim);margin-bottom:3px}
+  select,input[type=number],input[type=range]{width:100%;padding:6px 8px;border:1px solid var(--line);
+    border-radius:6px;background:#fff;color:var(--ink);font-size:13px}
+  input[type=range]{padding:0}
+  .row{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap}
+  .row>div{flex:1;min-width:110px}
+  button{padding:8px 14px;border:1px solid var(--line);background:#fff;color:var(--ink);
+    border-radius:6px;cursor:pointer;font-size:13px}
+  button:hover{background:var(--soft)}
+  button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+  button.primary:hover{filter:brightness(1.08)}
+  button:disabled{opacity:.55;cursor:default}
+  canvas{display:block;width:100%;background:#fff;border:1px solid var(--line);border-radius:8px}
+  table{border-collapse:collapse;width:100%;font-size:12.5px}
+  th,td{border:1px solid var(--line);padding:5px 8px;text-align:right}
+  th{background:var(--soft);font-weight:600;text-align:right}
+  th:first-child,td:first-child{text-align:left}
+  .kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-top:10px}
+  .kv div{background:var(--soft);border-radius:7px;padding:7px 9px}
+  .kv b{display:block;font-size:15px;font-variant-numeric:tabular-nums}
+  .kv span{font-size:11.5px;color:var(--dim)}
+  .badge{display:inline-block;padding:1px 7px;border-radius:20px;font-size:11.5px;font-weight:600}
+  .b-ok{background:#e6f6ec;color:var(--ok)}
+  .b-bad{background:#fdeaea;color:var(--bad)}
+  .inv{list-style:none;padding:0;margin:0}
+  .inv li{border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-bottom:7px;background:#fff}
+  .inv .nm{font-weight:600;font-size:13px}
+  .inv .dt{color:var(--dim);font-size:12px;margin-top:2px;font-variant-numeric:tabular-nums}
+  code{background:var(--soft);padding:1px 5px;border-radius:4px;font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>mcmc-forge · 马尔可夫链蒙特卡洛实验室</h1>
+  <p class="sub">Metropolis-Hastings / Hamiltonian MC / Gibbs · 零依赖单文件 · 8 条不变量自检（含 Ising 精确配分函数对拍）</p>
+
+  <div class="card">
+    <h2>采样器</h2>
+    <p class="note">选目标分布与采样器，点「运行」。1D 目标会叠加解析密度曲线与采样直方图，2D 画散点。</p>
+    <div class="row">
+      <div><label>目标分布</label><select id="sel-target"></select></div>
+      <div><label>采样器</label><select id="sel-sampler">
+        <option value="rwm">Random-Walk Metropolis</option>
+        <option value="hmc">Hamiltonian MC（leapfrog）</option>
+      </select></div>
+      <div><label>样本数 N</label><input type="number" id="inp-n" value="20000" step="1000"></div>
+    </div>
+    <div class="row" style="margin-top:10px">
+      <div><label>RWM 步长 σ <span id="v-step"></span></label><input type="range" id="inp-step" min="0.05" max="4" step="0.05" value="1"></div>
+      <div><label>HMC ε <span id="v-eps"></span></label><input type="range" id="inp-eps" min="0.02" max="0.8" step="0.01" value="0.2"></div>
+      <div><label>HMC 步数 L</label><input type="number" id="inp-L" value="20" step="1"></div>
+      <div style="flex:0 0 auto"><button class="primary" id="btn-run">运行</button></div>
+    </div>
+    <div class="kv" id="stats"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="card">
+      <h2>目标分布 vs 采样直方图</h2>
+      <p class="note" id="plot-note"></p>
+      <canvas id="cv-main" width="640" height="280"></canvas>
+    </div>
+    <div class="card">
+      <h2>轨迹（前 300 步）</h2>
+      <p class="note">上：第一维 trace；下：自相关函数 ACF（衰减越慢，有效样本越少）</p>
+      <canvas id="cv-trace" width="640" height="150"></canvas>
+      <canvas id="cv-acf" width="640" height="130" style="margin-top:8px"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>Ising 模型：Gibbs 采样 vs 精确配分函数</h2>
+    <p class="note">4×4 周期边界，J=1。精确值用 Gray-code 枚举全部 2¹⁶ = 65536 个构型算出（不是近似），与 Gibbs 采样对拍。</p>
+    <div class="row">
+      <div><label>β（逆温度，临界值 ≈ 0.4407）</label><input type="range" id="inp-beta" min="0.1" max="0.8" step="0.02" value="0.4"></div>
+      <div><label>Gibbs 步数</label><input type="number" id="inp-ising" value="120000" step="10000"></div>
+      <div style="flex:0 0 auto"><button class="primary" id="btn-ising">运行 Gibbs + 精确枚举</button></div>
+    </div>
+    <div class="grid2" style="margin-top:12px">
+      <div><canvas id="cv-ising" width="260" height="260" style="max-width:260px"></canvas></div>
+      <div><table id="tbl-ising"></table></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>8 条不变量自检</h2>
+    <p class="note">每条都是可独立复算的硬约束，不是"跑通就算"。浏览器内即时运行。</p>
+    <div class="row"><div style="flex:0 0 auto"><button class="primary" id="btn-test">运行自检</button></div>
+      <div style="flex:1"><span id="test-sum" class="badge b-ok">未运行</span></div></div>
+    <ul class="inv" id="inv-list" style="margin-top:12px"></ul>
+  </div>
+</div>
+
+<script id="engine">
+(function () {
+  'use strict';
+
+  /* ══════════════ 随机数 ══════════════ */
+  function mulberry32(a) {
+    return function () {
+      a |= 0; a = (a + 0x6D2B79F5) | 0;
+      var t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function rnorm(rng) {
+    if (rng._sp !== undefined && rng._sp !== null) { var s = rng._sp; rng._sp = null; return s; }
+    var u, v, r;
+    do { u = rng() * 2 - 1; v = rng() * 2 - 1; r = u * u + v * v; } while (r >= 1 || r === 0);
+    var f = Math.sqrt(-2 * Math.log(r) / r);
+    rng._sp = v * f; return u * f;
+  }
+  function ctz(x) { var c = 0; while ((x & 1) === 0) { c++; x >>>= 1; } return c; }
+
+  /* ══════════════ 特殊函数 ══════════════ */
+  var LG = [676.5203681218851, -1259.1392167224028, 771.32342877765313, -176.61502916214059,
+    12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+  function lgamma(z) {
+    if (z < 0.5) return Math.log(Math.PI / Math.sin(Math.PI * z)) - lgamma(1 - z);
+    z -= 1;
+    var x = 0.99999999999980993, i;
+    for (i = 0; i < LG.length; i++) x += LG[i] / (z + i + 1);
+    var t = z + LG.length - 0.5;
+    return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t) - t + Math.log(x);
+  }
+  function gser(a, x) {                       // 正则化下不完全 gamma P(a,x)，级数
+    var ap = a, sum = 1 / a, del = sum, n;
+    for (n = 0; n < 1000; n++) {
+      ap++; del *= x / ap; sum += del;
+      if (Math.abs(del) < Math.abs(sum) * 1e-17) break;
+    }
+    return sum * Math.exp(-x + a * Math.log(x) - lgamma(a));
+  }
+  function gcf(a, x) {                        // Q(a,x)，连分数
+    var FPMIN = 1e-300, b = x + 1 - a, c = 1 / FPMIN, d = 1 / b, h = d, i, an, del;
+    for (i = 1; i < 1000; i++) {
+      an = -i * (i - a); b += 2;
+      d = an * d + b; if (Math.abs(d) < FPMIN) d = FPMIN;
+      c = b + an / c; if (Math.abs(c) < FPMIN) c = FPMIN;
+      d = 1 / d; del = d * c; h *= del;
+      if (Math.abs(del - 1) < 1e-17) break;
+    }
+    return Math.exp(-x + a * Math.log(x) - lgamma(a)) * h;
+  }
+  function gammap(a, x) { if (x <= 0) return 0; return x < a + 1 ? gser(a, x) : 1 - gcf(a, x); }
+  function gammaq(a, x) { if (x <= 0) return 1; return x < a + 1 ? 1 - gser(a, x) : gcf(a, x); }
+  function normCdf(x) {
+    if (x === 0) return 0.5;
+    var t = x * x / 2;
+    return x < 0 ? 0.5 * gammaq(0.5, t) : 1 - 0.5 * gammaq(0.5, t);
+  }
+  function logsumexp(a, b) {
+    var m = a > b ? a : b;
+    return m + Math.log(Math.exp(a - m) + Math.exp(b - m));
+  }
+
+  /* ══════════════ 目标分布 ══════════════ */
+  // 每个 target: {dim, kind, mode, name, logpi(x[]), U(x[]), gradU(x[]), cdf(v)|null, mean, sd, x0, step, lo, hi}
+  function _n(v, mu, sd) { var z = (v - mu) / sd; return -0.5 * z * z - Math.log(sd * Math.sqrt(2 * Math.PI)); }
+
+  var TARGETS = {
+    normal: {
+      name: '标准正态 N(0,1)', kind: '1d', dim: 1, mode: 'rw', x0: [0], step: 2.4, lo: -4, hi: 4,
+      mean: 0, sd: 1, cdf: function (v) { return normCdf(v); },
+      logpi: function (x) { return -0.5 * x[0] * x[0]; },
+      U: function (x) { return 0.5 * x[0] * x[0]; },
+      gradU: function (x) { return [x[0]]; }
+    },
+    bimodal: {
+      name: '双峰混合 ½N(−2,0.5²)+½N(+2,0.5²)', kind: '1d', dim: 1, mode: 'rw', x0: [-2], step: 2.2, lo: -5, hi: 5,
+      mean: 0, sd: Math.sqrt(4.25), cdf: function (v) { return 0.5 * normCdf((v + 2) / 0.5) + 0.5 * normCdf((v - 2) / 0.5); },
+      logpi: function (x) { return logsumexp(_n(x[0], -2, 0.5) - Math.LN2, _n(x[0], 2, 0.5) - Math.LN2); },
+      U: null, gradU: function (x) {
+        var a = _n(x[0], -2, 0.5), b = _n(x[0], 2, 0.5);
+        var wa = Math.exp(a - Math.max(a, b)), wb = Math.exp(b - Math.max(a, b));
+        return [-(wa * (x[0] + 2) / 0.25 + wb * (x[0] - 2) / 0.25) / (wa + wb)];
+      }
+    },
+    gamma: {
+      name: 'Gamma(k=3, θ=2)', kind: '1d', dim: 1, mode: 'log', x0: [6], step: 0.9, lo: 0, hi: 26,
+      mean: 6, sd: Math.sqrt(18), cdf: function (v) { return gammap(3, v / 2); },
+      logpi: function (x) { if (x[0] <= 0) return -Infinity; return 2 * Math.log(x[0]) - x[0] / 2; },
+      U: function (x) { return x[0] <= 0 ? Infinity : -2 * Math.log(x[0]) + x[0] / 2; },
+      gradU: function (x) { return [-2 / x[0] + 0.5]; }
+    },
+    logistic: {
+      name: 'Logistic(0,1)', kind: '1d', dim: 1, mode: 'rw', x0: [0], step: 3.2, lo: -8, hi: 8,
+      mean: 0, sd: Math.PI / Math.sqrt(3), cdf: function (v) { return 1 / (1 + Math.exp(-v)); },
+      logpi: function (x) { var v = x[0]; return v > 0 ? -v - 2 * Math.log1p(Math.exp(-v)) : v - 2 * Math.log1p(Math.exp(v)); },
+      U: function (x) { var v = x[0]; return v > 0 ? v + 2 * Math.log1p(Math.exp(-v)) : -v + 2 * Math.log1p(Math.exp(v)); },
+      gradU: function (x) { return [Math.tanh(x[0] / 2)]; }
+    },
+    corr: {
+      name: '2D 相关高斯 ρ=0.95', kind: '2d', dim: 2, mode: 'rw', x0: [0, 0], step: 0.6, lo: -4, hi: 4,
+      mean: 0, sd: 1, cdf: null, rho: 0.95,
+      logpi: function (x) { var r = 0.95, d = 1 - r * r; return -0.5 * (x[0] * x[0] - 2 * r * x[0] * x[1] + x[1] * x[1]) / d; },
+      U: function (x) { var r = 0.95, d = 1 - r * r; return 0.5 * (x[0] * x[0] - 2 * r * x[0] * x[1] + x[1] * x[1]) / d; },
+      gradU: function (x) { var r = 0.95, d = 1 - r * r; return [(x[0] - r * x[1]) / d, (x[1] - r * x[0]) / d]; }
+    },
+    banana: {
+      name: '2D Banana（y|x ~ N(x²,1)）', kind: '2d', dim: 2, mode: 'rw', x0: [0, 1], step: 0.5, lo: -4, hi: 6,
+      mean: 0, sd: 1, cdf: null,
+      logpi: function (x) { var v = x[1] - x[0] * x[0]; return -0.5 * x[0] * x[0] - 0.5 * v * v; },
+      U: function (x) { var v = x[1] - x[0] * x[0]; return 0.5 * x[0] * x[0] + 0.5 * v * v; },
+      gradU: function (x) { var v = x[1] - x[0] * x[0]; return [x[0] - 2 * x[0] * v, v]; }
+    }
+  };
+
+  /* ══════════════ 提议核 ══════════════ */
+  // mode: 'rw' 对称随机游走 | 'log' 对数空间（正变量）| 'logit' (0,1) 变量
+  function propose(x, step, mode, rng, d) {
+    var y = new Array(d), k, z;
+    if (mode === 'log') {
+      z = step * rnorm(rng);
+      for (k = 0; k < d; k++) y[k] = x[k] * Math.exp(z);
+    } else if (mode === 'logit') {
+      z = step * rnorm(rng);
+      for (k = 0; k < d; k++) {
+        var l = Math.log(x[k] / (1 - x[k])) + z;
+        y[k] = 1 / (1 + Math.exp(-l));
+      }
+    } else {
+      for (k = 0; k < d; k++) y[k] = x[k] + step * rnorm(rng);
+    }
+    return y;
+  }
+  // 采样器内部使用的 log[q(x|y) / q(y|x)]
+  function logQratio(x, y, mode, d) {
+    var k, s = 0;
+    if (mode === 'log') {
+      for (k = 0; k < d; k++) s += Math.log(y[k]) - Math.log(x[k]);
+    } else if (mode === 'logit') {
+      for (k = 0; k < d; k++) s += Math.log(y[k]) + Math.log(1 - y[k]) - Math.log(x[k]) - Math.log(1 - x[k]);
+    }
+    return s;                                   // 'rw' → 0（对称）
+  }
+  // 独立实现的 log q(y|x)（用于验证上面的比值，含 Jacobian）
+  function logProp(x, y, step, mode, d) {
+    var k, s = 0, z;
+    if (mode === 'log') {
+      for (k = 0; k < d; k++) {
+        z = Math.log(y[k] / x[k]) / step;
+        s += -0.5 * z * z - Math.log(y[k]) - Math.log(step);
+      }
+    } else if (mode === 'logit') {
+      for (k = 0; k < d; k++) {
+        z = (Math.log(y[k] / (1 - y[k])) - Math.log(x[k] / (1 - x[k]))) / step;
+        s += -0.5 * z * z - Math.log(y[k]) - Math.log(1 - y[k]) - Math.log(step);
+      }
+    } else {
+      for (k = 0; k < d; k++) { z = (y[k] - x[k]) / step; s += -0.5 * z * z - Math.log(step); }
+    }
+    return s;
+  }
+
+  /* ══════════════ Random-Walk Metropolis ══════════════ */
+  function rwm(target, n, opts) {
+    opts = opts || {};
+    var rng = opts.rng || mulberry32(1), step = opts.step || target.step, mode = target.mode || 'rw';
+    var d = target.dim, x = (opts.x0 || target.x0).slice(), lp = target.logpi(x);
+    var acc = 0, out = [], i, lq, la, y, lpy;
+    for (i = 0; i < n; i++) {
+      y = propose(x, step, mode, rng, d);
+      lpy = target.logpi(y);
+      lq = isFinite(lpy) ? logQratio(x, y, mode, d) : 0;
+      la = lpy - lp + lq;                                     // log α
+      if (la >= 0) { x = y; lp = lpy; acc++; }
+      else {
+        var u = rng(); if (u < 1e-300) u = 1e-300;
+        if (Math.log(u) < la) { x = y; lp = lpy; acc++; }
+      }
+      out.push(x.slice());
+    }
+    return { samples: out, acceptRate: acc / n };
+  }
+
+  /* ══════════════ Hamiltonian MC ══════════════ */
+  function leapfrog(target, q, p, eps, L) {
+    var d = target.dim, k, l, g;
+    q = q.slice(); p = p.slice();
+    g = target.gradU(q);
+    for (k = 0; k < d; k++) p[k] -= 0.5 * eps * g[k];
+    for (l = 0; l < L; l++) {
+      for (k = 0; k < d; k++) q[k] += eps * p[k];
+      g = target.gradU(q);
+      if (l < L - 1) { for (k = 0; k < d; k++) p[k] -= eps * g[k]; }
+      else { for (k = 0; k < d; k++) p[k] -= 0.5 * eps * g[k]; }
+    }
+    return { q: q, p: p };
+  }
+  function dot(a, b) { var s = 0, i; for (i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
+  function hmc(target, n, opts) {
+    opts = opts || {};
+    var rng = opts.rng || mulberry32(1), eps = opts.eps || 0.2, L = opts.L || 20, d = target.dim;
+    var q = (opts.x0 || target.x0).slice(), Uq = target.U(q);
+    var acc = 0, out = [], dHs = [], i, k, p, H0, H1, r, pn, qn, dH;
+    for (i = 0; i < n; i++) {
+      p = []; for (k = 0; k < d; k++) p.push(rnorm(rng));
+      H0 = Uq + 0.5 * dot(p, p);
+      r = leapfrog(target, q, p, eps, L);
+      qn = r.q; pn = r.p;
+      H1 = target.U(qn) + 0.5 * dot(pn, pn);
+      dH = H1 - H0;
+      dHs.push(dH);
+      var u = rng(); if (u < 1e-300) u = 1e-300;
+      if (dH <= 0 || Math.log(u) < -dH) { q = qn; Uq = H1 - 0.5 * dot(pn, pn); acc++; }
+      out.push(q.slice());
+    }
+    return { samples: out, acceptRate: acc / n, dH: dHs };
+  }
+
+  /* ══════════════ Ising 模型 ══════════════ */
+  function buildNb(nSide) {
+    var N = nSide * nSide, nb = [], i, r, c;
+    for (i = 0; i < N; i++) {
+      r = (i / nSide) | 0; c = i % nSide;
+      nb.push([((r + nSide - 1) % nSide) * nSide + c, ((r + 1) % nSide) * nSide + c,
+        r * nSide + (c + nSide - 1) % nSide, r * nSide + (c + 1) % nSide]);
+    }
+    return nb;
+  }
+  function isingEnergy(s, nb) {
+    var N = s.length, E = 0, i;
+    for (i = 0; i < N; i++) E -= s[i] * (s[nb[i][0]] + s[nb[i][1]] + s[nb[i][2]] + s[nb[i][3]]);
+    return E / 2;
+  }
+  // Gray-code 枚举全部 2^N 个构型 → 精确配分函数与各阶矩
+  function isingExact(nSide, beta) {
+    var N = nSide * nSide, nb = buildNb(nSide), s = new Int8Array(N), i;
+    for (i = 0; i < N; i++) s[i] = 1;
+    var E = -2 * N, M = N, total = Math.pow(2, N);
+    var Z = 0, sE = 0, sE2 = 0, sA = 0, sM2 = 0, sM4 = 0, k, w, bit, si, sum, twoN = total;
+    for (k = 0; k < twoN; k++) {
+      w = Math.exp(-beta * E);
+      Z += w; sE += w * E; sE2 += w * E * E;
+      sA += w * Math.abs(M); sM2 += w * M * M; sM4 += w * M * M * M * M;
+      if (k === twoN - 1) break;
+      bit = ctz(k + 1); si = s[bit];
+      sum = s[nb[bit][0]] + s[nb[bit][1]] + s[nb[bit][2]] + s[nb[bit][3]];
+      E += 2 * si * sum; M -= 2 * si; s[bit] = -si;
+    }
+    var m1 = sE / Z;
+    return {
+      Z: Z, E: m1, E2: sE2 / Z, absM: sA / Z, M2: sM2 / Z, M4: sM4 / Z,
+      Cv: (sE2 / Z - m1 * m1) * beta * beta / N,
+      chi: (sM2 / Z) * beta / N
+    };
+  }
+  // 随机扫描 Gibbs 采样（单步满足细致平衡）
+  function gibbsIsing(nSide, beta, nIter, rng, opts) {
+    opts = opts || {};
+    var N = nSide * nSide, nb = buildNb(nSide), s = new Int8Array(N), i;
+    var hot = opts.init === 'hot';
+    for (i = 0; i < N; i++) s[i] = hot ? (rng() < 0.5 ? 1 : -1) : 1;
+    var E = isingEnergy(s, nb), M = hot ? 0 : N, rec = opts.record || 5;
+    if (hot) { M = 0; for (i = 0; i < N; i++) M += s[i]; }
+    var mh = [], eh = [], it, idx, nbk, si, sum, p, ns;
+    for (it = 0; it < nIter; it++) {
+      idx = (rng() * N) | 0;
+      nbk = nb[idx]; si = s[idx];
+      sum = s[nbk[0]] + s[nbk[1]] + s[nbk[2]] + s[nbk[3]];
+      p = 1 / (1 + Math.exp(-2 * beta * sum));
+      ns = rng() < p ? 1 : -1;
+      if (ns !== si) { E += 2 * si * sum; M += ns - si; s[idx] = ns; }
+      if (it % rec === 0) { mh.push(M / N); eh.push(E / N); }
+    }
+    return { mHist: mh, eHist: eh, s: s, M: M / N, E: E / N, N: N };
+  }
+  function mean(a) { var s = 0, i; for (i = 0; i < a.length; i++) s += a[i]; return s / a.length; }
+
+  /* ══════════════ 诊断 ══════════════ */
+  function acf(x, maxLag) {
+    var n = x.length, m = mean(x), c0 = 0, i, lag, r = [], c;
+    for (i = 0; i < n; i++) c0 += (x[i] - m) * (x[i] - m);
+    c0 /= n;
+    if (c0 <= 0) { for (lag = 1; lag <= maxLag; lag++) r.push(0); return r; }
+    for (lag = 1; lag <= maxLag; lag++) {
+      c = 0;
+      for (i = lag; i < n; i++) c += (x[i] - m) * (x[i - lag] - m);
+      r.push((c / n) / c0);
+    }
+    return r;
+  }
+  // 有效样本量：Geyer 初始正序列
+  function ess(x) {
+    var n = x.length, maxLag = Math.min(n - 2, 2000), m = mean(x), c0 = 0, i, lag, c, rho, sum = 0;
+    for (i = 0; i < n; i++) c0 += (x[i] - m) * (x[i] - m);
+    c0 /= n;
+    if (c0 <= 0) return 0;
+    for (lag = 1; lag <= maxLag; lag++) {
+      c = 0;
+      for (i = lag; i < n; i++) c += (x[i] - m) * (x[i - lag] - m);
+      rho = (c / n) / c0;
+      if (rho <= 0.05) break;
+      sum += rho;
+    }
+    return n / (1 + 2 * sum);
+  }
+  // Kolmogorov-Smirnov 统计量
+  function ksStat(samples, cdf) {
+    var x = samples.slice().sort(function (a, b) { return a - b; });
+    var n = x.length, D = 0, i, F;
+    for (i = 0; i < n; i++) {
+      F = cdf(x[i]);
+      D = Math.max(D, Math.abs((i + 1) / n - F), Math.abs(i / n - F));
+    }
+    return D;
+  }
+  // Gelman-Rubin R̂
+  function gelmanRubin(chains) {
+    var m = chains.length, n = chains[0].length, i, j, ms = [], vs = [], B, W = 0, vh;
+    for (i = 0; i < m; i++) {
+      ms.push(mean(chains[i]));
+      var s = 0, mu = ms[i];
+      for (j = 0; j < n; j++) s += (chains[i][j] - mu) * (chains[i][j] - mu);
+      vs.push(s / (n - 1));
+    }
+    var mm = mean(ms); B = 0;
+    for (i = 0; i < m; i++) B += (ms[i] - mm) * (ms[i] - mm);
+    B = n * B / (m - 1);
+    for (i = 0; i < m; i++) W += vs[i];
+    W /= m;
+    if (W <= 0) return 1;
+    vh = (n - 1) / n * W + B / n;
+    return Math.sqrt(vh / W);
+  }
+  // d 维标准高斯目标（用于接受率扫描）
+  function ndGaussian(d) {
+    return {
+      name: 'N(0,I_' + d + ')', kind: 'nd', dim: d, mode: 'rw', x0: (function () { var a = [], i; for (i = 0; i < d; i++) a.push(0); return a; })(),
+      logpi: function (x) { var s = 0, i; for (i = 0; i < d; i++) s += x[i] * x[i]; return -0.5 * s; },
+      U: function (x) { var s = 0, i; for (i = 0; i < d; i++) s += x[i] * x[i]; return 0.5 * s; },
+      gradU: function (x) { return x.slice(); }
+    };
+  }
+
+  /* ══════════════ 8 条不变量 ══════════════ */
+  function selfTest() {
+    var R = [], rng = mulberry32(20260915), i, k;
+    function add(nm, dt, ps) { R.push({ name: nm, detail: dt, pass: !!ps }); }
+
+    /* ① 非对称提议的 Jacobian：采样器用的比值 == 独立密度函数算出的比值 */
+    {
+      var worstJ = 0, worstDB = 0, pair = 0;
+      ['rw', 'log', 'logit'].forEach(function (md) {
+        var tg = md === 'rw' ? TARGETS.normal : md === 'log' ? TARGETS.gamma : TARGETS.logistic;
+        var st = md === 'logit' ? 1.5 : (md === 'log' ? 0.6 : 2.0);
+        var x0 = md === 'log' ? [4] : md === 'logit' ? [0.35] : [0.5];
+        var r2 = mulberry32(31337);
+        var x = x0.slice();
+        for (i = 0; i < 1500; i++) {
+          var y = propose(x, st, md, r2, 1);
+          var lpx = tg.logpi(x), lpy = tg.logpi(y);
+          if (!isFinite(lpx) || !isFinite(lpy)) { continue; }
+          var used = logQratio(x, y, md, 1);
+          var truth = logProp(y, x, st, md, 1) - logProp(x, y, st, md, 1);
+          worstJ = Math.max(worstJ, Math.abs(used - truth));
+          // 细致平衡（用独立密度函数完整算一遍）
+          var A = lpx + logProp(x, y, st, md, 1), B = lpy + logProp(y, x, st, md, 1);
+          var L = A + Math.min(0, B - A), Rr = B + Math.min(0, A - B);
+          worstDB = Math.max(worstDB, Math.abs(L - Rr));
+          pair++;
+          if (i % 3 === 0) x = y;
+        }
+      });
+      add('① Jacobian 修正 == 独立提议密度比（含 DB 恒等式）',
+        'max|Δ| = ' + worstJ.toExponential(2) + '；DB 残差 ' + worstDB.toExponential(2) + '（' + pair + ' 对）',
+        worstJ < 1e-12 && worstDB < 1e-12 && pair > 3000);
+    }
+
+    /* ② MC 矩 == 解析矩（4 个 1D 目标） */
+    var mom = {};
+    {
+      var lines = [], allOk = true;
+      ['normal', 'bimodal', 'gamma', 'logistic'].forEach(function (key) {
+        var tg = TARGETS[key], r3 = mulberry32(4242 + key.length);
+        var res = rwm(tg, 20000, { rng: r3, step: tg.step });
+        var xs = res.samples.map(function (v) { return v[0]; });
+        var mu = mean(xs), e = ess(xs), se = tg.sd / Math.sqrt(Math.max(e, 1));
+        var z = Math.abs(mu - tg.mean) / se;
+        mom[key] = { mean: mu, ess: e, z: z, samples: xs, accept: res.acceptRate };
+        lines.push(key + ' z=' + z.toFixed(2));
+        if (z > 4) allOk = false;
+      });
+      add('② MC 均值 == 解析均值（|z| < 4，ESS 校正后）', lines.join('；'), allOk);
+    }
+
+    /* ③ leapfrog 可逆性 + 能量误差 ΔH ∝ ε² */
+    {
+      var tg2 = TARGETS.banana, q0 = [0.5, 0.3], p0 = [0.2, -0.4];
+      var f1 = leapfrog(tg2, q0, p0, 0.1, 25);
+      var pn = [-f1.p[0], -f1.p[1]];
+      var f2 = leapfrog(tg2, f1.q, pn, 0.1, 25);
+      var rev = Math.max(Math.abs(f2.q[0] - q0[0]), Math.abs(f2.q[1] - q0[1]),
+        Math.abs(f2.p[0] + p0[0]), Math.abs(f2.p[1] + p0[1]));
+      function avgAbsDH(eps) {
+        var rr = mulberry32(999), h = hmc(tg2, 1200, { rng: rr, eps: eps, L: 25 }), s = 0, j, c = 0;
+        for (j = 0; j < h.dH.length; j++) if (isFinite(h.dH[j])) { s += Math.abs(h.dH[j]); c++; }
+        return c ? s / c : Infinity;
+      }
+      var d1 = avgAbsDH(0.20), d2 = avgAbsDH(0.10), ratio = d1 / d2;
+      add('③ leapfrog 可逆（往返复原）+ ΔH ∝ ε²',
+        '复原误差 ' + rev.toExponential(2) + '；ε 减半 ΔH 降 ' + ratio.toFixed(2) + '×（理论 4×）',
+        rev < 1e-10 && ratio > 2.5 && ratio < 6.5);
+    }
+
+    /* ④ Ising Gibbs == Gray-code 精确枚举 */
+    {
+      var ex = isingExact(4, 0.4);
+      var gb = gibbsIsing(4, 0.4, 150000, mulberry32(777), { init: 'hot', record: 5 });
+      var gAbsM = mean(gb.mHist.map(Math.abs)), gE = mean(gb.eHist);
+      var relM = Math.abs(gAbsM - ex.absM / 16) / (ex.absM / 16);
+      var relE = Math.abs(gE - ex.E / 16) / Math.abs(ex.E / 16);
+      mom._ising = { exact: ex, gibbsAbsM: gAbsM, gibbsE: gE, relM: relM, relE: relE };
+      add('④ Ising Gibbs == 2¹⁶ 构型精确枚举（β=0.4）',
+        '⟨|m|⟩ ' + gAbsM.toFixed(4) + ' vs ' + (ex.absM / 16).toFixed(4) + '（' + (relM * 100).toFixed(2) + '%）；' +
+        '⟨E⟩/N ' + gE.toFixed(4) + ' vs ' + (ex.E / 16).toFixed(4) + '（' + (relE * 100).toFixed(2) + '%）',
+        relM < 0.04 && relE < 0.03);
+    }
+
+    /* ⑤ KS 检验：经验分布 == 解析 CDF */
+    {
+      var ksLines = [], ksOk = true;
+      ['normal', 'bimodal', 'gamma', 'logistic'].forEach(function (key) {
+        var tg = TARGETS[key], xs = mom[key].samples, e = mom[key].ess;
+        var D = ksStat(xs, tg.cdf), stat = D * Math.sqrt(e);
+        ksLines.push(key + ' D√ESS=' + stat.toFixed(2));
+        if (stat > 2.0) ksOk = false;
+      });
+      add('⑤ KS 统计量 × √ESS < 2.0（99% 临界 1.63）', ksLines.join('；'), ksOk);
+    }
+
+    /* ⑥ RWM 最优尺度：ESS 峰值处接受率 ≈ 0.234 */
+    {
+      var d = 10, tg = ndGaussian(d), best = null, scan = [];
+      [0.2, 0.35, 0.5, 0.6, 0.75, 0.9, 1.0, 1.4, 2.0].forEach(function (st) {
+        var rr = mulberry32(555), res = rwm(tg, 6000, { rng: rr, step: st });
+        var xs = res.samples.map(function (v) { return v[0]; });
+        var e = ess(xs);
+        scan.push({ step: st, acc: res.acceptRate, ess: e });
+        if (!best || e > best.ess) best = { step: st, acc: res.acceptRate, ess: e };
+      });
+      mom._scan = scan;
+      add('⑥ RWM 最优尺度接受率 ≈ 0.234（d=10，ESS 峰值）',
+        'σ*=' + best.step + ' → 接受率 ' + best.acc.toFixed(3) + '（理论 0.234）',
+        best.acc > 0.12 && best.acc < 0.45);
+    }
+
+    /* ⑦ HMC 的有效样本量显著高于 RWM（banana） */
+    {
+      var tb = TARGETS.banana;
+      var rw = rwm(tb, 4000, { rng: mulberry32(8), step: 0.5 });
+      var hm = hmc(tb, 4000, { rng: mulberry32(8), eps: 0.12, L: 25 });
+      var eR = ess(rw.samples.map(function (v) { return v[0]; }));
+      var eH = ess(hm.samples.map(function (v) { return v[0]; }));
+      mom._ess = { rw: eR, hmc: eH, accRw: rw.acceptRate, accHmc: hm.acceptRate };
+      add('⑦ HMC 有效样本量 >> RWM（banana，同 N=4000）',
+        'ESS ' + eH.toFixed(0) + ' vs ' + eR.toFixed(0) + '（' + (eH / Math.max(eR, 1e-9)).toFixed(1) + '×）；接受率 ' +
+        hm.acceptRate.toFixed(2) + ' vs ' + rw.acceptRate.toFixed(2),
+        eH / Math.max(eR, 1e-9) > 4);
+    }
+
+    /* ⑧ Gelman-Rubin R̂：过分散初值 → 收敛后 R̂ → 1 */
+    {
+      var tc = TARGETS.corr, chains = [], seeds = [11, 22, 33, 44];
+      var inits = [[-4, -4], [4, 4], [-4, 4], [4, -4]];
+      for (i = 0; i < 4; i++) {
+        chains.push(rwm(tc, 2500, { rng: mulberry32(seeds[i]), step: 0.6, x0: inits[i] })
+          .samples.map(function (v) { return v[0]; }));
+      }
+      var rEarly = gelmanRubin(chains.map(function (c) { return c.slice(0, 120); }));
+      var rLate = gelmanRubin(chains.map(function (c) { return c.slice(500); }));
+      mom._rhat = { early: rEarly, late: rLate };
+      add('⑧ Gelman-Rubin R̂：早期 > 1.05 且收敛后 < 1.02',
+        'R̂(前120)=' + rEarly.toFixed(3) + ' → R̂(去燃烧)=' + rLate.toFixed(3),
+        rEarly > 1.05 && rLate < 1.02);
+    }
+    return R;
+  }
+
+  globalThis.MCMC = {
+    mulberry32: mulberry32, rnorm: rnorm, ctz: ctz,
+    lgamma: lgamma, gammap: gammap, gammaq: gammaq, normCdf: normCdf, logsumexp: logsumexp,
+    TARGETS: TARGETS, ndGaussian: ndGaussian,
+    propose: propose, logQratio: logQratio, logProp: logProp,
+    rwm: rwm, hmc: hmc, leapfrog: leapfrog,
+    buildNb: buildNb, isingEnergy: isingEnergy, isingExact: isingExact, gibbsIsing: gibbsIsing,
+    acf: acf, ess: ess, ksStat: ksStat, gelmanRubin: gelmanRubin, mean: mean,
+    selfTest: selfTest
+  };
+})();
+</script>
+
+<script id="ui">
+(function () {
+  if (typeof document === 'undefined') return;
+  var M = globalThis.MCMC;
+  var $ = function (id) { return document.getElementById(id); };
+
+  /* ---- 目标下拉 ---- */
+  var keys = ['normal', 'bimodal', 'gamma', 'logistic', 'corr', 'banana'];
+  keys.forEach(function (k) {
+    var o = document.createElement('option');
+    o.value = k; o.textContent = M.TARGETS[k].name;
+    $('sel-target').appendChild(o);
+  });
+
+  // 每次重绘都按 clientWidth × DPR 重新设置位图，避免 scale() 累积
+  function fit(cv, hCss) {
+    if (cv._lh === undefined) cv._lh = hCss;
+    var r = window.devicePixelRatio || 1, h = cv._lh;
+    var w = Math.max(220, Math.round(cv.clientWidth || 640));
+    cv.width = Math.round(w * r); cv.height = Math.round(h * r);
+    cv.style.height = h + 'px';
+    var c = cv.getContext('2d');
+    c.setTransform(r, 0, 0, r, 0, 0);
+    c.fillStyle = '#fff'; c.fillRect(0, 0, w, h);
+    return { c: c, w: w, h: h };
+  }
+  function frame(c, x0, y0, x1, y1) {
+    c.strokeStyle = '#c9cfd6'; c.lineWidth = 1;
+    c.strokeRect(Math.round(x0) + .5, Math.round(y0) + .5, Math.round(x1 - x0), Math.round(y1 - y0));
+  }
+
+  var last = null;
+
+  function run() {
+    var key = $('sel-target').value, tg = M.TARGETS[key];
+    var n = Math.max(500, parseInt($('inp-n').value, 10) || 20000);
+    var sampler = $('sel-sampler').value;
+    var t0 = performance.now();
+    var res, rng = M.mulberry32(12345);
+    if (sampler === 'hmc') {
+      res = M.hmc(tg, n, { rng: rng, eps: parseFloat($('inp-eps').value), L: Math.max(1, parseInt($('inp-L').value, 10) || 20) });
+    } else {
+      res = M.rwm(tg, n, { rng: rng, step: parseFloat($('inp-step').value) });
+    }
+    var ms = performance.now() - t0;
+    last = { key: key, tg: tg, res: res, sampler: sampler };
+    drawMain(); drawTrace(); drawAcf();
+
+    /* 统计面板 */
+    var xs = res.samples.map(function (v) { return v[0]; });
+    var e = M.ess(xs), mu = M.mean(xs);
+    var sdV = 0;
+    for (var i = 0; i < xs.length; i++) sdV += (xs[i] - mu) * (xs[i] - mu);
+    sdV = Math.sqrt(sdV / xs.length);
+    var html = '';
+    function box(b, s) { html += '<div><b>' + b + '</b><span>' + s + '</span></div>'; }
+    box(res.acceptRate.toFixed(3), '接受率' + (sampler === 'hmc' ? '（HMC）' : '（RWM）'));
+    box(Math.round(e) + ' / ' + n, 'ESS / N（x₁）');
+    box((100 * e / n).toFixed(1) + '%', 'ESS 效率');
+    box(mu.toFixed(4), 'E[x₁] 估计' + (tg.kind === '1d' ? '（解析 ' + tg.mean + '）' : ''));
+    box(sdV.toFixed(4), 'sd 估计' + (tg.kind === '1d' ? '（解析 ' + tg.sd.toFixed(4) + '）' : ''));
+    box(ms.toFixed(0) + ' ms', wallclock(ms));
+    if (tg.kind === '1d') {
+      var se = tg.sd / Math.sqrt(Math.max(e, 1)), z = Math.abs(mu - tg.mean) / se;
+      box('z = ' + z.toFixed(2), '均值偏差（|z|<3 正常）');
+      var D = M.ksStat(xs, tg.cdf);
+      box((D * Math.sqrt(e)).toFixed(2), 'D·√ESS（<1.63 通过）');
+    } else if (key === 'banana') {
+      box(M.mean(xs.map(function (v) { return v * v; })).toFixed(3), 'E[x₁²]（解析 1.000）');
+      box(M.mean(res.samples.map(function (v) { var t = v[1] - v[0] * v[0]; return t * t; })).toFixed(3),
+        'E[(x₂−x₁²)²]（解析 1.000）');
+    } else {
+      box(M.mean(res.samples.map(function (v) { return v[0] * v[1]; })).toFixed(3), 'E[x₁x₂]（解析 0.950）');
+      box(M.mean(xs.map(function (v) { return v * v; })).toFixed(3), 'E[x₁²]（解析 1.000）');
+    }
+    $('stats').innerHTML = html;
+    $('plot-note').textContent = tg.kind === '1d'
+      ? '灰线 = 解析密度；蓝柱 = 采样直方图（' + n + ' 个样本）'
+      : '散点 = 后 3000 个样本；虚线 = 解析等高线（1σ / 2σ）';
+  }
+
+  /* ---- 主图 ---- */
+  function drawMain() {
+    var g = clear($('cv-main')), c = g.c, W = g.w, H = g.h, tg = last.tg;
+    var pad = 34, x0 = pad, y0 = 14, x1 = W - 14, y1 = H - 26;
+    frame(c, x0, y0, x1, y1);
+    if (tg.kind === '1d') {
+      var lo = tg.lo, hi = tg.hi, NB = 60, hist = new Array(NB).fill(0), i, b;
+      var xs = last.res.samples.map(function (v) { return v[0]; });
+      for (i = 0; i < xs.length; i++) {
+        b = Math.floor((xs[i] - lo) / (hi - lo) * NB);
+        if (b >= 0 && b < NB) hist[b]++;
+      }
+      // 解析密度（数值归一化到直方图尺度）
+      var dens = [], mx = 0, k, v, step = (hi - lo) / 200;
+      for (k = 0; k <= 200; k++) {
+        v = Math.exp(tg.logpi([lo + k * step]));
+        dens.push(v); if (v > mx) mx = v;
+      }
+      var hmax = 0; for (k = 0; k < NB; k++) hmax = Math.max(hmax, hist[k]);
+      var scale = (hmax || 1) / (mx || 1);
+      // 画密度曲线
+      c.beginPath(); c.strokeStyle = '#9aa3ad'; c.lineWidth = 2;
+      for (k = 0; k <= 200; k++) {
+        var px = x0 + (k / 200) * (x1 - x0), py = y1 - (dens[k] * scale / (hmax || 1)) * (y1 - y0 - 4);
+        if (k === 0) c.moveTo(px, py); else c.lineTo(px, py);
+      }
+      c.stroke();
+      // 直方图
+      c.fillStyle = 'rgba(37,99,235,.55)';
+      var bw = (x1 - x0) / NB;
+      for (k = 0; k < NB; k++) {
+        var hh = hist[k] / (hmax || 1) * (y1 - y0 - 4);
+        c.fillRect(x0 + k * bw + .5, y1 - hh, bw - 1, hh);
+      }
+      c.fillStyle = '#6b7280'; c.font = '11px system-ui';
+      c.fillText(tg.lo, x0 - 6, y1 + 15); c.fillText(tg.hi, x1 - 14, y1 + 15);
+      c.fillText('密度', 4, y0 + 10);
+    } else {
+      var pts = last.res.samples.slice(-3000), sx, sy, i2;
+      var LX = tg.lo - 0.5, HX = tg.hi + 0.5, LY = tg.kind === '2d' ? (tg === M.TARGETS.banana ? -4 : -4) : -4;
+      var HY = tg === M.TARGETS.banana ? 6 : 4;
+      function mx0(v) { return x0 + (v - LX) / (HX - LX) * (x1 - x0); }
+      function my0(v) { return y1 - (v - LY) / (HY - LY) * (y1 - y0); }
+      // 解析等高线
+      c.strokeStyle = '#d7dce2'; c.setLineDash([4, 4]); c.lineWidth = 1;
+      [1, 2].forEach(function (lv) {
+        c.beginPath();
+        for (var a = 0; a <= 360; a += 2) {
+          var th = a * Math.PI / 180, xx, yy;
+          if (tg === M.TARGETS.corr) {
+            var r2 = lv, rho = 0.95;
+            xx = r2 * Math.cos(th); yy = r2 * (rho * Math.cos(th) + Math.sqrt(1 - rho * rho) * Math.sin(th));
+          } else {
+            xx = lv * Math.cos(th); yy = xx * xx + lv * Math.sin(th);
+          }
+          var px = mx0(xx), py = my0(yy);
+          if (a === 0) c.moveTo(px, py); else c.lineTo(px, py);
+        }
+        c.stroke();
+      });
+      c.setLineDash([]);
+      c.fillStyle = 'rgba(37,99,235,.35)';
+      for (i2 = 0; i2 < pts.length; i2++) {
+        sx = mx0(pts[i2][0]); sy = my0(pts[i2][1]);
+        if (sx < x0 || sx > x1 || sy < y0 || sy > y1) continue;
+        c.fillRect(sx - 1, sy - 1, 2, 2);
+      }
+      c.fillStyle = '#6b7280'; c.font = '11px system-ui';
+      c.fillText('x₁', x1 - 16, y1 + 15); c.fillText('x₂', 4, y0 + 10);
+    }
+  }
+
+  /* ---- trace + ACF ---- */
+  function drawTrace() {
+    var g = fit($('cv-trace'), 150), c = g.c, W = g.w, H = g.h;
+    var x0 = 34, y0 = 10, x1 = W - 10, y1 = H - 18;
+    frame(c, x0, y0, x1, y1);
+    var xs = last.res.samples.slice(0, 300).map(function (v) { return v[0]; });
+    var mn = Math.min.apply(null, xs), mx = Math.max.apply(null, xs);
+    if (mx - mn < 1e-9) { mx = mn + 1; }
+    c.beginPath(); c.strokeStyle = '#2563eb'; c.lineWidth = 1.2;
+    for (var i = 0; i < xs.length; i++) {
+      var px = x0 + i / (xs.length - 1) * (x1 - x0), py = y1 - (xs[i] - mn) / (mx - mn) * (y1 - y0 - 4);
+      if (i === 0) c.moveTo(px, py); else c.lineTo(px, py);
+    }
+    c.stroke();
+    c.fillStyle = '#6b7280'; c.font = '11px system-ui';
+    c.fillText(mx.toFixed(2), 2, y0 + 9); c.fillText(mn.toFixed(2), 2, y1 - 2);
+  }
+  function drawAcf() {
+    var g = fit($('cv-acf'), 130), c = g.c, W = g.w, H = g.h;
+    var x0 = 34, y0 = 10, x1 = W - 10, y1 = H - 18, LAG = 60;
+    frame(c, x0, y0, x1, y1);
+    var xs = last.res.samples.map(function (v) { return v[0]; });
+    var r = M.acf(xs, LAG);
+    var bw = (x1 - x0) / LAG;
+    c.strokeStyle = '#d7dce2'; c.beginPath();
+    c.moveTo(x0, y1 - 0.0 * (y1 - y0)); c.lineTo(x1, y1); c.stroke();
+    for (var i = 0; i < LAG; i++) {
+      var v = r[i], hh = Math.max(0, v) * (y1 - y0 - 4);
+      c.fillStyle = v > 0.05 ? 'rgba(37,99,235,.75)' : 'rgba(154,163,173,.5)';
+      c.fillRect(x0 + i * bw + .5, y1 - hh, bw - 1, hh);
+    }
+    c.fillStyle = '#6b7280'; c.font = '11px system-ui';
+    c.fillText('ACF（lag 1–' + LAG + '）', 36, y0 + 10);
+  }
+
+  /* ---- Ising ---- */
+  function runIsing() {
+    var beta = parseFloat($('inp-beta').value);
+    var nIt = Math.max(10000, parseInt($('inp-ising').value, 10) || 120000);
+    var btn = $('btn-ising'); btn.disabled = true; btn.textContent = '计算中…';
+    setTimeout(function () {
+      var ex = M.isingExact(4, beta);
+      var gb = M.gibbsIsing(4, beta, nIt, M.mulberry32(2024), { init: 'hot', record: 5 });
+      var gAbsM = M.mean(gb.mHist.map(Math.abs)), gE = M.mean(gb.eHist);
+      var gM2 = M.mean(gb.mHist.map(function (v) { return v * v; }));
+      var rows = '<tr><th>量</th><th>Gibbs 采样</th><th>精确枚举（2¹⁶）</th><th>相对误差</th></tr>';
+      function row(nm, a, b) {
+        var rel = Math.abs(a - b) / (Math.abs(b) < 1e-12 ? 1 : Math.abs(b));
+        rows += '<tr><td>' + nm + '</td><td>' + a.toFixed(5) + '</td><td>' + b.toFixed(5) + '</td><td>' +
+          (rel * 100).toFixed(2) + '%</td></tr>';
+      }
+      row('⟨|m|⟩', gAbsM, ex.absM / 16);
+      row('⟨m²⟩', gM2, ex.M2 / 256);
+      row('⟨E⟩/N', gE, ex.E / 16);
+      rows += '<tr><td>比热 Cᵥ</td><td>—</td><td>' + ex.Cv.toFixed(5) + '</td><td>—</td></tr>';
+      rows += '<tr><td>磁化率 χ</td><td>' + (gM2 * beta).toFixed(5) + '</td><td>' + ex.chi.toFixed(5) + '</td><td>' +
+        (Math.abs(gM2 * beta - ex.chi) / ex.chi * 100).toFixed(2) + '%</td></tr>';
+      $('tbl-ising').innerHTML = rows;
+      // 画格子
+      var g = fit($('cv-ising'), 260), c = g.c, W = g.w, H = g.h, N = 16, side = 4;
+      var cell = Math.min(W, H) / side;
+      for (var i = 0; i < N; i++) {
+        var r = (i / side) | 0, cc = i % side;
+        c.fillStyle = gb.s[i] > 0 ? '#c0392b' : '#2b6cb0';
+        c.fillRect(cc * cell + 1, r * cell + 1, cell - 2, cell - 2);
+      }
+      c.strokeStyle = '#e3e6ea'; c.strokeRect(.5, .5, W - 1, H - 1);
+      btn.disabled = false; btn.textContent = '运行 Gibbs + 精确枚举';
+    }, 30);
+  }
+
+  /* ---- 自检 ---- */
+  function runTests() {
+    var btn = $('btn-test'); btn.disabled = true; btn.textContent = '运行中…';
+    setTimeout(function () {
+      var R = M.selfTest(), html = '', ok = 0;
+      R.forEach(function (r) {
+        if (r.pass) ok++;
+        html += '<li><div class="nm">' + (r.pass ? '✅' : '❌') + ' ' + r.name + '</div><div class="dt">' + r.detail + '</div></li>';
+      });
+      $('inv-list').innerHTML = html;
+      var s = $('test-sum');
+      s.textContent = ok + ' / ' + R.length + ' 通过';
+      s.className = 'badge ' + (ok === R.length ? 'b-ok' : 'b-bad');
+      btn.disabled = false; btn.textContent = '运行自检';
+    }, 30);
+  }
+
+  $('btn-run').onclick = run;
+  $('btn-ising').onclick = runIsing;
+  $('btn-test').onclick = runTests;
+  $('sel-target').onchange = function () {
+    var tg = M.TARGETS[$('sel-target').value];
+    $('inp-step').value = tg.step;
+    $('v-step').textContent = '= ' + tg.step;
+  };
+  $('inp-step').oninput = function () { $('v-step').textContent = '= ' + (+this.value).toFixed(2); };
+  $('inp-eps').oninput = function () { $('v-eps').textContent = '= ' + (+this.value).toFixed(2); };
+  $('v-step').textContent = '= ' + (+$('inp-step').value).toFixed(2);
+  $('v-eps').textContent = '= ' + (+$('inp-eps').value).toFixed(2);
+  $('inp-step').value = M.TARGETS[keys[0]].step;
+  $('v-step').textContent = '= ' + M.TARGETS[keys[0]].step.toFixed(2);
+  run();
+  runTests();
+  window.addEventListener('resize', function () { if (last) { drawMain(); drawTrace(); drawAcf(); } });
+})();
+</script>
+</body>
+</html>
