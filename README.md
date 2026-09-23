@@ -1,5 +1,12 @@
 # mcmc-forge · 马尔可夫链蒙特卡洛实验室
 
+<p align="center">
+  <a href="https://github.com/CJX0712/mcmc-forge/actions/workflows/ci.yml"><img src="https://github.com/CJX0712/mcmc-forge/actions/workflows/ci.yml/badge.svg" alt="ci"></a>
+  <a href="https://github.com/CJX0712/mcmc-forge/releases"><img src="https://img.shields.io/github/v/release/CJX0712/mcmc-forge?sort=semver" alt="release"></a>
+  <a href="https://github.com/CJX0712/mcmc-forge/blob/main/LICENSE"><img src="https://img.shields.io/github/license/CJX0712/mcmc-forge" alt="license"></a>
+  <img src="https://img.shields.io/badge/author-%E6%99%A8%E6%98%9F-1f6feb" alt="author">
+</p>
+
 零依赖单文件 HTML。手写实现三个 MCMC 采样器，每条正确性都由**可独立复算的硬不变量**钉死——
 包括拿 **Gray-code 枚举全部 2¹⁶ 个 Ising 构型**算出的精确配分函数去对拍 Gibbs 采样。
 
